@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="My Planner">
+<title>My Planner</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+body { background:#f5f4f0; height:100dvh; overflow:hidden; }
+input[type="date"]::-webkit-calendar-picker-indicator { opacity:0.5; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+const MONTHS_KO = ["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월"];
+const WEEKDAYS_KO = ["일","월","화","수","목","금","토"];
+
+const HOLIDAYS = {
+  "01-01":"신정","03-01":"삼일절","05-01":"노동절",
+  "05-05":"어린이날","06-06":"현충일","08-15":"광복절",
+  "10-03":"개천절","10-09":"한글날","12-25":"성탄절",
+  "2026-05-24":"부처님오신날","2026-05-25":"대체공휴일",
+};
+
+const TYPE_CONFIG = {
+  event:    { label:"이벤트",   emoji:"📅", bg:"#e8eef5", color:"#4a6fa5", bar:"#4a6fa5" },
+  task:     { label:"수행",     emoji:"✅", bg:"#faf0e6", color:"#c17f3a", bar:"#c17f3a" },
+  deadline: { label:"과제마감", emoji:"🔴", bg:"#fdecea", color:"#d95f52", bar:"#d95f52" },
+};
+
+const STORAGE_KEY = "myplanner_v2";
+
+function toDateStr(y,m,d) {
+  return `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+}
+function getHoliday(y,m,d) {
+  const full = toDateStr(y,m,d);
+  const mmdd = `${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+  return HOLIDAYS[full] || HOLIDAYS[mmdd] || null;
+}
+function loadTasks() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)||"[]"); } catch { return []; }
+}
+
+function App() {
+  const now = new Date();
+  const todayStr = toDateStr(now.getFullYear(), now.getMonth()+1, now.getDate());
+
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth()+1);
+  const [selected, setSelected] = useState(todayStr);
+  const [tasks, setTasks] = useState(loadTasks);
+  const [view, setView] = useState("calendar");
+  const [modal, setModal] = useState(false);
+  const [form, setForm] = useState({ title:"", date:todayStr, type:"event", note:"" });
+
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)); } catch {}
+  }, [tasks]);
+
+  const firstDay = new Date(year, month-1, 1).getDay();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const prevDays = new Date(year, month-1, 0).getDate();
+  const totalCells = Math.ceil((firstDay + daysInMonth) / 7) * 7;
+
+  const cells = Array.from({ length: totalCells }, (_,i) => {
+    let d, y2=year, m2=month, other=false;
+    if (i < firstDay) {
+      d = prevDays - firstDay + i + 1;
+      m2 = month===1 ? 12 : month-1;
+      y2 = month===1 ? year-1 : year;
+      other = true;
+    } else if (i >= firstDay + daysInMonth) {
+      d = i - firstDay - daysInMonth + 1;
+      m2 = month===12 ? 1 : month+1;
+      y2 = month===12 ? year+1 : year;
+      other = true;
+    } else {
+      d = i - firstDay + 1;
+    }
+    const dateStr = toDateStr(y2,m2,d);
+    const dow = i % 7;
+    const holiday = getHoliday(y2,m2,d);
+    const dayTasks = tasks.filter(t => t.date === dateStr);
+    return { d, dateStr, dow, other, holiday, dayTasks };
+  });
+
+  function prevMonth() {
+    if (month===1) { setYear(y=>y-1); setMonth(12); } else setMonth(m=>m-1);
+  }
+  function nextMonth() {
+    if (month===12) { setYear(y=>y+1); setMonth(1); } else setMonth(m=>m+1);
+  }
+  function goToday() {
+    setYear(now.getFullYear()); setMonth(now.getMonth()+1);
+    setSelected(todayStr); setView("calendar");
+  }
+  function openModal() {
+    setForm({ title:"", date:selected, type:"event", note:"" });
+    setModal(true);
+  }
+  function submitTask() {
+    if (!form.title.trim() || !form.date) return;
+    const t = { id:Date.now().toString(), ...form, title:form.title.trim(), done:false };
+    setTasks(prev => [...prev, t]);
+    setModal(false);
+    const [y,m] = form.date.split("-").map(Number);
+    setYear(y); setMonth(m); setSelected(form.date); setView("calendar");
+  }
+  function toggleTask(id) {
+    setTasks(prev => prev.map(t => t.id===id ? {...t, done:!t.done} : t));
+  }
+  function deleteTask(id) {
+    if (!window.confirm("이 일정을 삭제할까요?")) return;
+    setTasks(prev => prev.filter(t => t.id!==id));
+  }
+
+  const panelTasks = view==="all"
+    ? [...tasks].sort((a,b) => a.date.localeCompare(b.date))
+    : tasks.filter(t => t.date===selected);
+
+  const [sy,sm,sd] = selected.split("-").map(Number);
+  const selDate = new Date(sy,sm-1,sd);
+  const todayDate = new Date(todayStr);
+  const diff = Math.round((selDate-todayDate)/86400000);
+  const dday = diff===0 ? "오늘" : diff>0 ? `D - ${diff}` : `D + ${Math.abs(diff)}`;
+  const selHoliday = getHoliday(sy,sm,sd);
+  const selDow = selDate.getDay();
+
+  return (
+    <div style={{ fontFamily:"'Noto Sans KR',sans-serif", background:"#f5f4f0", height:"100dvh", display:"flex", flexDirection:"column", overflow:"hidden", maxWidth:520, margin:"0 auto", position:"relative" }}>
+
+      {/* HEADER */}
+      <div style={{ background:"#fff", padding:"16px 20px 12px", borderBottom:"1px solid #e8e6df", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+        <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
+          <span style={{ fontFamily:"Georgia,serif", fontSize:28, fontWeight:700, letterSpacing:-1, color:"#1a1a1a" }}>{MONTHS_KO[month-1]}</span>
+          <span style={{ fontSize:13, color:"#8a8880" }}>{year}</span>
+        </div>
+        <div style={{ display:"flex", gap:6 }}>
+          {["‹","오늘","›"].map((label,i) => (
+            <button key={i} onClick={[prevMonth,goToday,nextMonth][i]}
+              style={{ height:34, padding:"0 10px", borderRadius:17, border:"none", background:"#f0efe9", color:"#555", fontSize:i===1?12:18, fontWeight:500, fontFamily:"inherit", cursor:"pointer" }}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* CALENDAR */}
+      <div style={{ background:"#fff", flexShrink:0, padding:"0 12px 10px", borderBottom:"1px solid #e8e6df" }}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", marginBottom:2 }}>
+          {WEEKDAYS_KO.map((w,i) => (
+            <div key={i} style={{ textAlign:"center", fontSize:11, fontWeight:600, padding:"5px 0", color:i===0?"#d95f52":i===6?"#4a6fa5":"#b8b5ac" }}>{w}</div>
+          ))}
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:1 }}>
+          {cells.map(({ d, dateStr, dow, other, holiday, dayTasks },i) => {
+            const isToday = dateStr===todayStr;
+            const isSel = dateStr===selected;
+            const isSun = dow===0 || !!holiday;
+            const isSat = dow===6;
+            const numColor = other?"#ccc":isSun?"#d95f52":isSat?"#4a6fa5":"#1a1a1a";
+            const wrapBg = isSel?"#4a7c59":isToday?"#1a1a1a":"transparent";
+            const numC = (isToday||isSel)?"#fff":numColor;
+            return (
+              <div key={i} onClick={() => { setSelected(dateStr); setView("calendar"); }}
+                style={{ display:"flex", flexDirection:"column", alignItems:"center", paddingTop:3, cursor:"pointer", borderRadius:8, minHeight:42 }}>
+                <div style={{ width:26, height:26, borderRadius:"50%", background:wrapBg, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                  <span style={{ fontSize:13, fontWeight:500, color:numC, lineHeight:1 }}>{d}</span>
+                </div>
+                {dayTasks.length > 0 && (
+                  <div style={{ display:"flex", gap:2, marginTop:2, flexWrap:"wrap", justifyContent:"center", maxWidth:30 }}>
+                    {dayTasks.slice(0,3).map((t,j) => (
+                      <div key={j} style={{ width:4, height:4, borderRadius:"50%", background:TYPE_CONFIG[t.type]?.bar||"#4a7c59" }} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* TASK PANEL */}
+      <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
+        <div style={{ padding:"12px 20px 8px", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+          <div>
+            {view==="all" ? (
+              <>
+                <div style={{ fontSize:16, fontWeight:700 }}>전체 할 일</div>
+                <div style={{ fontSize:12, color:"#8a8880", marginTop:2 }}>미완료 {tasks.filter(t=>!t.done).length}개</div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize:16, fontWeight:700 }}>{sm}월 {sd}일 ({WEEKDAYS_KO[selDow]}){selHoliday?" 🔴":""}</div>
+                <div style={{ fontSize:12, color:"#8a8880", marginTop:2 }}>{dday}{selHoliday?`  ${selHoliday}`:""}</div>
+              </>
+            )}
+          </div>
+          <button onClick={openModal}
+            style={{ width:36, height:36, borderRadius:"50%", border:"none", background:"#4a7c59", color:"#fff", fontSize:22, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 2px 8px rgba(74,124,89,0.35)" }}>
+            +
+          </button>
+        </div>
+
+        <div style={{ flex:1, overflowY:"auto", padding:"0 14px 70px", WebkitOverflowScrolling:"touch" }}>
+          {panelTasks.length===0 ? (
+            <div style={{ textAlign:"center", padding:"40px 20px", color:"#b8b5ac" }}>
+              <div style={{ fontSize:36, marginBottom:10 }}>📋</div>
+              <p style={{ fontSize:13, lineHeight:1.7 }}>{view==="all"?"등록된 일정이 없어요!":"이 날의 일정이 없어요.\n+ 버튼으로 추가해보세요!"}</p>
+            </div>
+          ) : panelTasks.map(t => {
+            const cfg = TYPE_CONFIG[t.type];
+            return (
+              <div key={t.id} style={{ background:"#fff", borderRadius:14, padding:"13px 14px", marginBottom:8, display:"flex", alignItems:"flex-start", gap:11, boxShadow:"0 2px 10px rgba(0,0,0,0.06)", position:"relative", overflow:"hidden", opacity:t.done?0.55:1 }}>
+                <div style={{ position:"absolute", left:0, top:0, bottom:0, width:3, background:cfg.bar, borderRadius:"3px 0 0 3px" }} />
+                <button onClick={() => toggleTask(t.id)}
+                  style={{ width:22, height:22, borderRadius:"50%", border:t.done?"none":"2px solid #e0ddd6", background:t.done?cfg.bar:"transparent", flexShrink:0, marginTop:1, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:11, fontWeight:700 }}>
+                  {t.done?"✓":""}
+                </button>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:14, fontWeight:500, color:t.done?"#aaa":"#1a1a1a", textDecoration:t.done?"line-through":"none", lineHeight:1.4, wordBreak:"keep-all" }}>{t.title}</div>
+                  <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:4, flexWrap:"wrap" }}>
+                    <span style={{ fontSize:10, fontWeight:700, padding:"2px 7px", borderRadius:20, background:cfg.bg, color:cfg.color }}>{cfg.label}</span>
+                    {view==="all" && <span style={{ fontSize:11, color:"#8a8880" }}>{t.date.slice(5).replace("-","월 ")}일</span>}
+                    {t.note && <span style={{ fontSize:11, color:"#aaa" }}>· {t.note}</span>}
+                  </div>
+                </div>
+                <button onClick={() => deleteTask(t.id)}
+                  style={{ width:26, height:26, border:"none", background:"transparent", color:"#ccc", cursor:"pointer", borderRadius:"50%", fontSize:13, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                  ✕
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* BOTTOM NAV */}
+      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:520, height:58, background:"#fff", borderTop:"1px solid #e8e6df", display:"flex", alignItems:"center", zIndex:10 }}>
+        {[{label:"캘린더",icon:"🗓️",key:"calendar"},{label:"할 일",icon:"📋",key:"all"}].map(nav => (
+          <button key={nav.key} onClick={() => setView(nav.key)}
+            style={{ flex:1, height:"100%", border:"none", background:"transparent", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, cursor:"pointer", color:view===nav.key?"#4a7c59":"#b8b5ac", fontFamily:"inherit", fontSize:10, fontWeight:600 }}>
+            <span style={{ fontSize:20 }}>{nav.icon}</span>
+            {nav.label}
+          </button>
+        ))}
+      </div>
+
+      {/* MODAL */}
+      {modal && (
+        <div onClick={e => e.target===e.currentTarget && setModal(false)}
+          style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", backdropFilter:"blur(4px)", zIndex:100, display:"flex", alignItems:"flex-end" }}>
+          <div style={{ background:"#fff", borderRadius:"24px 24px 0 0", padding:"20px 20px 40px", width:"100%", maxHeight:"90dvh", overflowY:"auto" }}>
+            <div style={{ width:36, height:4, background:"#e0ddd6", borderRadius:2, margin:"0 auto 20px" }} />
+            <div style={{ fontSize:18, fontWeight:700, marginBottom:18 }}>새 일정 추가</div>
+
+            <div style={{ marginBottom:14 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:"#8a8880", marginBottom:7, textTransform:"uppercase", letterSpacing:0.5 }}>유형</div>
+              <div style={{ display:"flex", gap:7 }}>
+                {Object.entries(TYPE_CONFIG).map(([key,cfg]) => (
+                  <button key={key} onClick={() => setForm(f=>({...f,type:key}))}
+                    style={{ flex:1, padding:"9px 6px", borderRadius:8, border:form.type===key?"none":"1.5px solid #e8e6df", background:form.type===key?cfg.bg:"#f5f4f0", color:form.type===key?cfg.color:"#8a8880", fontSize:11, fontWeight:700, fontFamily:"inherit", cursor:"pointer" }}>
+                    {cfg.emoji} {cfg.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ marginBottom:12 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:"#8a8880", marginBottom:6, textTransform:"uppercase", letterSpacing:0.5 }}>제목</div>
+              <input value={form.title} onChange={e => setForm(f=>({...f,title:e.target.value}))}
+                placeholder="일정 제목을 입력하세요" maxLength={50}
+                style={{ width:"100%", padding:"11px 13px", border:"1.5px solid #e8e6df", borderRadius:8, fontSize:15, fontFamily:"inherit", background:"#f5f4f0", color:"#1a1a1a", outline:"none", boxSizing:"border-box" }} />
+            </div>
+
+            <div style={{ marginBottom:12 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:"#8a8880", marginBottom:6, textTransform:"uppercase", letterSpacing:0.5 }}>날짜</div>
+              <input type="date" value={form.date} onChange={e => setForm(f=>({...f,date:e.target.value}))}
+                style={{ width:"100%", padding:"11px 13px", border:"1.5px solid #e8e6df", borderRadius:8, fontSize:15, fontFamily:"inherit", background:"#f5f4f0", color:"#1a1a1a", outline:"none", boxSizing:"border-box" }} />
+            </div>
+
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:"#8a8880", marginBottom:6, textTransform:"uppercase", letterSpacing:0.5 }}>메모 (선택)</div>
+              <input value={form.note} onChange={e => setForm(f=>({...f,note:e.target.value}))}
+                placeholder="추가 메모"
+                style={{ width:"100%", padding:"11px 13px", border:"1.5px solid #e8e6df", borderRadius:8, fontSize:15, fontFamily:"inherit", background:"#f5f4f0", color:"#1a1a1a", outline:"none", boxSizing:"border-box" }} />
+            </div>
+
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={() => setModal(false)}
+                style={{ flex:1, padding:14, border:"1.5px solid #e8e6df", borderRadius:8, background:"transparent", fontSize:15, fontWeight:600, fontFamily:"inherit", color:"#8a8880", cursor:"pointer" }}>
+                취소
+              </button>
+              <button onClick={submitTask}
+                style={{ flex:2, padding:14, border:"none", borderRadius:8, background:"#4a7c59", color:"#fff", fontSize:15, fontWeight:700, fontFamily:"inherit", cursor:"pointer" }}>
+                추가하기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
